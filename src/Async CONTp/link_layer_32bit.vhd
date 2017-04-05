@@ -184,7 +184,6 @@ signal s_crc_data_valid		: std_logic;							-- flag indicating that the input da
 signal s_crc_data_valid_prev: std_logic;
 signal s_rx_data_in_temp	: std_logic_vector(31 downto 0);		-- vector that holds the previous primitive
 signal s_cont_flag			: std_logic;							-- flag to indicate that CONTp has been received
-signal s_cont_flag_prev		: std_logic;							-- flag to indicate that CONTp has been received
 signal s_cont_flag_transmit	: std_logic;							-- flagh to indicate that CONTp is being transmitted
 
 signal s_primitive_in_temp 	: std_logic; 					-- Flag high when primitive primitive received or last primitive was contp
@@ -193,19 +192,11 @@ signal pause_just_finished  : std_logic;
 signal s_primitive_out_temp	: std_logic;
 signal s_tx_data_out_temp	: std_logic_vector(31 downto 0);		-- transmit data out (Physical Layer)
 
+signal s_tx_data_in_reg		: std_logic_vector(31 downto 0);
+signal long_pause_flag		: std_logic;
+
 signal crc_started 			: std_logic;
 signal s_primitive 			: std_logic_vector(31 downto 0);
-signal s_primitive_prev 	: std_logic_vector(31 downto 0);
-
-signal s_tx_data_to_phy		: std_logic_vector(31 downto 0);
-signal s_tx_cont_flag		: std_logic;
-signal s_tx_primitive 		: std_logic_vector(31 downto 0);
-signal s_tx_primitive_prev 	: std_logic_vector(31 downto 0);
-signal s_tx_primitive_flag	: std_logic;
-signal s_tx_prim_old		: std_logic_vector(31 downto 0);
-signal s_tx_cont_flag_prev	: std_logic;
-signal s_tx_data_to_phy_prev : std_logic_vector(31 downto 0);
-signal s_tx_data_to_phy_prev_reg : std_logic_vector(31 downto 0);
 
 begin
 -- debug signals
@@ -220,66 +211,75 @@ s_trans_status_in 	<= trans_status_in;
 trans_status_out 	<= s_trans_status_out;
 s_tx_data_in 		<= tx_data_in;
 rx_data_out 		<= s_rx_data_out;
-tx_data_out 		<= s_tx_data_to_phy;
+tx_data_out 		<= s_tx_data_out;
 s_phy_status_in(3 downto 0) 	<= phy_status_in(3 downto 0);
 --s_phy_status_in(3) 	<= pause_just_finished;
 
 phy_status_out <= s_phy_status_out;
+
+process (s_rst_n, s_clk)
+	begin
+		if(s_rst_n = '0') then
+			s_tx_data_in_reg		<= x"00000000";
+		elsif (rising_edge(s_clk)) then
+			if (s_trans_status_in(c_l_transmit_request) = '1') then
+				s_tx_data_in_reg		<= tx_data_in;
+			end if;
+		end if;
+	end process;
+
+
+process (s_rst_n, s_clk)
+	begin
+		if(s_rst_n = '0') then
+			long_pause_flag <= '0';
+		elsif (rising_edge(s_clk)) then
+			if (s_trans_status_in(c_l_transmit_request) = '0' and s_phy_status_in(c_l_pause_all) = '1' and pause_just_finished /= '1') then
+				long_pause_flag <= '1';
+			else
+				long_pause_flag <= '0';
+			end if;
+		end if;
+	end process;			
+
 
 process (s_clk, s_rst_n)
 	begin
 		if(s_rst_n = '0') then
 			pause_just_finished 	<= '0';
 			s_crc_data_valid_prev 	<= '0';
+		--	s_tx_data_in_reg		<= x"00000000";
 		elsif (rising_edge(s_clk)) then
 			pause_just_finished		<= phy_status_in(c_l_pause_all);
 			s_crc_data_valid_prev 	<= s_crc_data_valid;
-
+			
 		end if;
 	end process;
 
-RX_CONT_PREV: process(s_rst_n, s_clk)
-begin
-	if(s_rst_n = '0') then
-		s_cont_flag_prev <=  '0';
-	elsif(rising_edge(s_clk)) then
-		s_cont_flag_prev <= s_cont_flag;
-	end if;
-end process;
-
-RX_PRIMITIVE_PREV : process(s_rst_n, s_clk)
-begin
-	if(s_rst_n = '0') then
-		s_primitive_prev <=  (others => '0');
-	elsif(rising_edge(s_clk)) then
-		s_primitive_prev <= s_primitive;
-	end if;
-end process;
-
 -- Receive CONTp Functionality (assigns s_rx_data_in)
-RX_CONTP: process (s_rst_n, phy_status_in, rx_data_in, s_cont_flag) -- assign s_rx_data_in based on whether CONTp is active
+RECEIVE_CONTP: process (s_rst_n, phy_status_in, rx_data_in, s_cont_flag) -- assign s_rx_data_in based on whether CONTp is active
     begin
      	if (s_rst_n = '0') then
-			s_rx_data_in 				<= (others => '0');												-- default signal assignment for s_rx_data_in when CONTp has not yet been used
-			s_primitive					<= (others => '0');
+			s_rx_data_in 				<= rx_data_in;												-- default signal assignment for s_rx_data_in when CONTp has not yet been used
+			s_primitive					<= s_primitive;
 			s_cont_flag					<= '0';														-- indicate that CONTp is not active
 		elsif (phy_status_in(c_l_primitive_in) = '1' and rx_data_in /= ALIGNp) then								-- Physical Layer sends a valid CONTp
 			if(rx_data_in /= CONTp) then
 				s_primitive	 			<= rx_data_in;
-				s_rx_data_in 			<= rx_data_in;
-				s_cont_flag 			<= '0';
+				s_rx_data_in 			<= rx_data_in;	
+				s_cont_flag 			<= '0';	
 			else
-				s_primitive 			<= s_primitive_prev;
-				s_rx_data_in 			<= s_primitive_prev;
-				s_cont_flag 			<= '1';
+				s_primitive 			<= s_primitive;
+				s_rx_data_in 			<= s_primitive;	
+				s_cont_flag 			<= '1';	
 			end if;
-		elsif(s_cont_flag_prev = '1') then
-			s_primitive 				<= s_primitive_prev;
-			s_rx_data_in 				<= s_primitive_prev;
-			s_cont_flag 				<= '1';
-		else -- not receiving a prim, and cont_flag = '0' --> data from device
-			s_primitive 				<= s_primitive_prev;
-			s_rx_data_in 				<= rx_data_in;
+		elsif(s_cont_flag = '1') then
+			s_primitive 				<= s_primitive;
+			s_rx_data_in 				<= s_primitive;	
+			s_cont_flag 				<= '1';	
+		else -- not recieving a prim, and cont_flag = '0' --> data from device
+			s_primitive 				<= s_primitive;
+			s_rx_data_in 				<= rx_data_in;	
 			s_cont_flag 				<= '0';
 		end if;
   end process;
@@ -287,108 +287,46 @@ RX_CONTP: process (s_rst_n, phy_status_in, rx_data_in, s_cont_flag) -- assign s_
   s_primitive_in_temp <= s_phy_status_in(c_l_primitive_in) or s_cont_flag;
 
 -- Transmit CONTp Functionality (assigns s_rx_data_in)
-TX_PRIMITIVE_PREV : process(s_rst_n, s_clk)
-begin
-	if(s_rst_n = '0') then
-		s_tx_primitive_prev <=  (others => '0');
-		s_tx_prim_old 		<=  (others => '0');
-		s_tx_data_to_phy_prev <=  (others => '0');
-		s_tx_data_to_phy_prev_reg <=  (others => '0');
-	elsif(rising_edge(s_clk)) then
-		--if (s_phy_status_in(c_l_pause_all) = '0') then
-			s_tx_primitive_prev <= s_tx_primitive;
-			s_tx_data_to_phy_prev <= s_tx_data_to_phy;
-			s_tx_data_to_phy_prev_reg <= s_tx_data_to_phy_prev;
+--TRANSMIT_CONTP_MEMORY: process (s_clk,s_rst_n)						-- memory to latch the previous valid primitive from the Physical Layer
+--    begin
+--      if (s_rst_n = '0') then
+--        s_tx_data_out_temp	<= x"00000000";												-- initialize the temp value when reset is active
+--      elsif (rising_edge(s_clk)) then
+--		if(rx_data_in /= CONTp and s_phy_status_in(c_l_primitive_in) = '1' and s_phy_status_in(c_l_pause_all) /='1') then
+--			s_tx_data_out_temp <= s_tx_data_out;											-- update the temp value if there is a valid primitive from the Physical Layer that is not CONTp
+--		end if;
+--      end if;
+--	  end process;
 
-			if (s_tx_cont_flag = '0') then
-				s_tx_prim_old 	<= s_tx_data_out;
-			end if;
-		--end if;
+--TRANSMIT_CONTP_SUPPORT: process (s_clk, s_rst_n, phy_status_in, s_tx_data_out, s_tx_data_out_temp) 
+ --   begin
+--      if (s_rst_n = '0') then
+--		tx_data_out 	<= s_tx_data_out;													-- default signal assignment for s_rx_data_in when CONTp has not yet been used
+--		s_cont_flag_transmit		<= '0';															-- indicate that CONTp is not active
+--		s_cont_lfsr_en			<= '0';			-- start the lfsr scrambler
+--		s_cont_lfsr_rst			<= '1';			-- start the lfsr scrambler
+--        --s_primitive_out_temp <= '0';
+--      elsif(rising_edge(s_clk)) then
+--      s_cont_lfsr_rst			<= '0';			-- start the lfsr scrambler
+--		if(phy_status_in(c_l_primitive_in) = '1' and s_tx_data_out = s_tx_data_out_temp) then			-- repeated primitive
+--			tx_data_out <= CONTp;											-- s_rx_data_in gets assigned to be the previous valid primitive
+--			s_cont_flag_transmit <= '1';															-- indicate that CONTp is active
+--			s_cont_lfsr_en			<= '1';			-- start the lfsr scrambler
+ --           --s_primitive_out_temp <= '1';
+--		elsif(s_cont_flag_transmit = '1') then
+--			tx_data_out <= s_rx_data_in_temp;
+--			s_cont_flag_transmit <= '1';
+--			s_cont_lfsr_en			<= '1';			-- start the lfsr scrambler
+--			--s_primitive_out_temp <= '1';
+--		else -- not recieving a prim, and cont_flag = '0'
+--			tx_data_out <= s_tx_data_out;													-- default
+--			s_cont_flag_transmit <= '0';
+--			s_cont_lfsr_en			<= '0';			-- start the lfsr scrambler
+--			--s_primitive_out_temp <= '0';
+--		end if;
+--      end if;
+--  end process;
 
-	end if;
-end process;
-
-TX_CONT_PREV: process(s_rst_n, s_clk)
-begin
-	if(s_rst_n = '0') then
-		s_tx_cont_flag_prev <=  '0';
-	elsif(rising_edge(s_clk)) then
-	--	if (s_phy_status_in(c_l_pause_all) = '0') then
-			s_tx_cont_flag_prev <= s_tx_cont_flag;
-	--	end if;
-	end if;
-end process;
-
-TX_CONTP_SUPPORT: process (s_rst_n, s_tx_primitive_flag, s_tx_cont_flag, s_tx_prim_old, s_tx_data_out, s_tx_data_to_phy_prev_reg, s_tx_primitive_prev, s_tx_cont_flag_prev, s_phy_status_in)
-	begin
-		if(s_rst_n = '0') then
-			s_tx_data_to_phy 							<= s_tx_data_out;
-			s_tx_cont_flag 								<= '0';
-			s_phy_status_out(c_l_primitive_out) 		<= '0';
-			s_cont_lfsr_en								<= '0';						-- do not start the lfsr scrambler
-			s_cont_lfsr_rst								<= '0';
-			s_tx_primitive 								<= (others => '0');
-
-		elsif (s_phy_status_in(c_l_pause_all) = '1') then
-			s_tx_data_to_phy 							<= s_tx_data_to_phy;						-- send CONTp
-			s_tx_cont_flag 								<= s_tx_cont_flag;							-- start the cont flag
-			s_phy_status_out(c_l_primitive_out) 		<= s_phy_status_out(c_l_primitive_out);							-- inform the Physical Layer that a primitive is being transmitted
-			s_cont_lfsr_en								<= s_cont_lfsr_en;							-- start the lfsr scrambler
-			s_tx_primitive 								<= s_tx_primitive;
-			s_cont_lfsr_rst								<= s_cont_lfsr_rst;
-
-		elsif (s_tx_primitive_flag = '1') then								-- transmitting a primitive
-
-			if (s_tx_data_to_phy_prev_reg = s_tx_primitive_prev and s_tx_primitive_prev /= ALIGNp and s_tx_cont_flag_prev = '0') then					-- same primitive sent twice
-				s_tx_data_to_phy 						<= CONTp;						-- send CONTp
-				s_tx_cont_flag 							<= '1';							-- start the cont flag
-				s_phy_status_out(c_l_primitive_out) 	<= '1';							-- inform the Physical Layer that a primitive is being transmitted
-				s_cont_lfsr_en							<= '1';							-- start the lfsr scrambler
-				s_tx_primitive 							<= s_tx_primitive;
-				s_cont_lfsr_rst							<= '1';
-
-			elsif (s_tx_cont_flag = '1') then									-- last primitive was CONTp
-
-			s_cont_lfsr_rst								<= '1';
-
-				if (s_tx_prim_old /= s_tx_data_out) then 							-- a new primitive is ready to be transmitted
-					s_tx_cont_flag 						<= '0';
-					s_cont_lfsr_en						<= '0';							-- stop the lfsr scrambler
-					s_tx_data_to_phy 					<= s_tx_data_out;				-- transmit random data
-					s_phy_status_out(c_l_primitive_out) <= '1';		-- 					-- inform the Physical Layer that a non-primitive is being transmitted
-					s_tx_primitive 						<= s_tx_data_out;
-
-				else 																-- the same primitive is ready to be transmitted
-					s_tx_cont_flag 						<= '1';
-					s_cont_lfsr_en						<= '1';							-- start the lfsr scrambler
-					s_tx_data_to_phy 					<= s_cont_lfsr_data_out;				-- transmit random data
-					s_phy_status_out(c_l_primitive_out) <= '0';		-- 					-- inform the Physical Layer that a non-primitive is being transmitted
-					s_tx_primitive 						<= s_tx_primitive;
-				end if;
-
-			else
-				s_tx_data_to_phy 						<= s_tx_data_out;				-- transmit output data
-				s_tx_cont_flag 							<= '0';
-				s_phy_status_out(c_l_primitive_out) 	<= '1';
-				s_cont_lfsr_en							<= '0';							-- stop the lfsr scrambler
-				s_tx_primitive 							<= s_tx_data_out;
-
-			end if;
-		else
-			s_tx_data_to_phy 							<= s_tx_data_out;
-			s_tx_cont_flag			 					<= '0';
-			s_phy_status_out(c_l_primitive_out) 		<= '0';
-			s_cont_lfsr_en								<= '1';							-- stop the lfsr scrambler
-			s_cont_lfsr_rst								<= '1';
-			s_tx_primitive 								<= s_tx_primitive;
-		end if;
-	end process;
-
-	s_cont_lfsr_data_in <= x"AAAAAAAA";
-	s_cont_scram_pause <= '0';
-
-
-	---------------------------------------------------
 
 process(s_clk, s_rst_n)
 	begin
@@ -449,7 +387,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
     end process;
 
 
-    NEXT_STATE_LOGIC: process (current_state, s_rst_n, s_rx_data_in, s_trans_status_in, s_tx_data_in, s_phy_status_in, s_crc, s_cont_flag, s_primitive_in_temp,pause_just_finished)
+    NEXT_STATE_LOGIC: process (current_state, s_rst_n, s_rx_data_in, s_trans_status_in, s_tx_data_in, s_phy_status_in, s_crc, s_cont_flag, s_primitive_in_temp,pause_just_finished, long_pause_flag)
       begin
         case (current_state) is
 			-- Idle SM states (top level)
@@ -551,7 +489,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 									--	next_state <= L_SendData;
 									elsif (s_phy_status_in(c_l_pause_all) = '1') then											-- do not change states during a pause
 										next_state <= L_SendData;
-									elsif (s_trans_status_in(c_l_data_done) = '0') then -- and pause_just_finished = '0') or long_pause_flag = '1') then
+									elsif ((s_trans_status_in(c_l_data_done) = '0' and pause_just_finished = '0') or long_pause_flag = '1') then	
 									--elsif (s_trans_status_in(c_l_data_done) = '0') then											-- No more data to transmit
 										next_state <= L_SendCRC;
 									elsif ((s_trans_status_in(c_l_data_done) = '1' and s_primitive_in_temp = '1' and s_rx_data_in(31 downto 0)=HOLDp)) then	-- more data to transmit
@@ -625,6 +563,8 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 										next_state <= L_Idle;
 									elsif (s_primitive_in_temp = '1' and s_rx_data_in(31 downto 0) = R_ERRp) then			-- Physical Layer indicates there was an error with the transmission
 										next_state <= L_Idle;
+									elsif (s_primitive_in_temp = '1' and s_rx_data_in(31 downto 0) = R_ERRp) then
+										next_state <= L_Idle;
 									elsif (s_primitive_in_temp = '1' and s_rx_data_in(31 downto 0) = SYNCp) then			-- Physical Layer requests synchronization, failing the transmission
 										next_state <= L_Idle;
 									else 																								-- wait for a response from the Physical Layer
@@ -646,9 +586,9 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 										next_state <= L_Idle;										-- if the Physical Layer no longer signals that data is ready, return to the Idle state to await further commands
 									end if;
 			-- L_RcvChkRdy sends a response to the Physical Layer that the Transport Layer is ready to receive
-			when L_RcvChkRdy		=> if (s_phy_status_in(c_l_phyrdy) /='1') then				-- PHYRDYn: Physical Layer indicates the communication channel failed
+			when L_RcvChkRdy		=> if (s_phy_status_in(c_l_phyrdy)/='1') then				-- PHYRDYn: Physical Layer indicates the communication channel failed
 										next_state <= L_NoCommErr;
-									elsif (phy_status_in(c_l_pause_all) = '1') then				-- Physical Layer pauses transmission (for ALIGNp)
+									elsif (pause_just_finished = '1') then				-- Physical Layer pauses transmission (for ALIGNp)
 										next_state <= L_RcvChkRdy;
 									elsif (s_primitive_in_temp = '1' and s_rx_data_in(31 downto 0)=X_RDYp) then			-- wait for a response from the Physical Layer
 										next_state <= L_RcvChkRdy;
@@ -774,7 +714,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_Idle  		=> 	s_tx_data_out(31 downto 0) 						<= SYNCp;			-- transmit SYNCp to the Physical Layer, indicating that the Link Layer is waiting
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag			<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -804,7 +744,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_SyncEscape  	=>	s_tx_data_out(31 downto 0) 						<= SYNCp;			-- transmit SYNCp to the Physical Layer
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -839,7 +779,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 									else
 										s_trans_status_out(c_l_phy_paused)			<= '0';				-- inform the Transport Layer that the Physical Layer has not requested a pause
 									end if;
-									s_tx_primitive_flag				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status) 				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									s_trans_status_out(c_l_rcv_data_valid)			<= '0';				-- inform the Transport Layer that the Link Layer is not sending valid receive data
@@ -864,7 +804,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_NoComm  		=>	s_tx_data_out(31 downto 0) 						<= ALIGNp;			-- Transmit ALIGNp to the Physical Layer, indicating the Link Layer wants to reset the comm channel
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status) 				<= '1';				-- request that the Physical Layer clears its abort status to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -894,7 +834,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_SendAlign  	=> 	s_tx_data_out(31 downto 0) 						<= ALIGNp;			-- Transmit ALIGNp to the Physical Layer, indicating the Link Layer wants to reset the comm channel
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag		<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -924,7 +864,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_RESET	  	=> 	s_tx_data_out(31 downto 0) 						<= c_no_data;		-- no data to transmit to the Physical Layer
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag			<= '0';				-- inform the Physical Layer that a valid primitive is not being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '0';				-- inform the Physical Layer that a valid primitive is not being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -955,7 +895,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_PMDeny	  	=> 	s_tx_data_out(31 downto 0) 						<= PMNAKp;			-- transmit PMNAKp to inform the device that power management is not supported
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag			<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -986,7 +926,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_SendChkRdy	=> 	s_tx_data_out(31 downto 0) 						<= X_RDYp;			-- send receiver ready to the Physical Layer, informing the device that a transmission will be coming
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1021,7 +961,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_SendSOF	  	=> 	s_tx_data_out(31 downto 0) 						<= SOFp;			-- send start of frame primitive
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag			<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1049,7 +989,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 									s_lfsr_rst										<= '1';				-- reset is done
 									s_scram_pause									<= '0';
 
-									if (phy_status_in(c_l_pause_all) = '1') then
+									if (pause_just_finished = '1') then
 										s_crc_data_valid 							<= '0';				-- pause the crc generator
 										s_lfsr_en									<= '0';				-- pause the scrambler component
 									else
@@ -1060,7 +1000,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_SendData	  	=>  s_tx_data_out(31 downto 0) 						<= s_lfsr_data_out;	-- transmit the scrambled data to the Physical Layer
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag		<= '0';				-- inform the Physical Layer that a valid primitive is NOT being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '0';				-- inform the Physical Layer that a valid primitive is NOT being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1087,8 +1027,17 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 									-- s_lfsr_en										<= '1';				-- enable the scrambler component
 									s_lfsr_rst										<= '1';				-- do not reset the scrambler component (active low) using the independent reset
 
+									
+									if (pause_just_finished = '1' and s_trans_status_in(c_l_data_done) = '0') then
+										s_crc_data_in								<= s_tx_data_in_reg;		-- no data to input to the crc component
+										s_crc_data_valid 							<= '1';				-- inform the crc component that the input data are no longer valid
+										s_eof 										<= '0';				-- end the crc calculation
 
-									if (s_phy_status_in(c_l_pause_all) = '1') then
+										s_lfsr_data_in								<= s_tx_data_in_reg;-- scramble the previous data from the Transport Layer
+										s_lfsr_en									<= '1';				-- enable the scrambler component
+										s_scram_pause								<= '0';
+
+									elsif (s_phy_status_in(c_l_pause_all) = '1') then
 									--if (pause_just_finished = '1') then
 										s_crc_data_in								<= c_no_data;		-- no data to input to the crc component
 										s_crc_data_valid 							<= '0';				-- inform the crc component that the input data are no longer valid
@@ -1096,9 +1045,9 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 
 										s_lfsr_data_in 								<= c_no_data;			-- scramble the crc
 										s_lfsr_en									<= '0';				-- enable the scrambler component
-										s_scram_pause								<= '0';
+										s_scram_pause								<= '0';	
 
-									elsif (s_trans_status_in(c_l_data_done) = '0') then -- and pause_just_finished = '0') or long_pause_flag = '1') then					-- if the transmission is over
+									elsif ((s_trans_status_in(c_l_data_done) = '0' and pause_just_finished = '0') or long_pause_flag = '1') then					-- if the transmission is over
 										s_crc_data_in								<= c_no_data;		-- no data to input to the crc component
 										s_crc_data_valid 							<= '0';				-- inform the crc component that the input data are no longer valid
 										s_eof 										<= '1';				-- end the crc calculation
@@ -1118,15 +1067,15 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 									end if;
 
 									--if (s_phy_status_in(c_l_pause_all) = '1' and ) then
-									--	s_scram_pause								<= '1';
+									--	s_scram_pause								<= '1';	
 									--else
-									--	s_scram_pause								<= '0';
+									--	s_scram_pause								<= '0';	
 									--end if;
 
 			when L_RcvrHold	  	=>	s_tx_data_out(31 downto 0) 						<= HOLDAp;			-- send a hold acknowledge to the Physical Layer
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag		<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 									s_trans_status_out(c_l_phy_paused)				<= '1';				-- inform the Transport Layer that the Physical Layer has requested a pause
 
@@ -1151,7 +1100,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_SendHold	  	=>	s_tx_data_out(31 downto 0) 						<= HOLDp;			-- transmit HOLDp to the Physical Layer
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag			<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1181,7 +1130,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_SendCRC	=>		s_tx_data_out(31 downto 0) 						<= s_lfsr_data_out;	-- transmit the scrambled CRC to the Physical Layer
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag		<= '0';				-- inform the Physical Layer that a valid primitive is not being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '0';				-- inform the Physical Layer that a valid primitive is not being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1220,7 +1169,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_SendEOF	  	=>	s_tx_data_out(31 downto 0) 						<= EOFp;			-- transmit the end of frame primitive to the Physical Layer
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag			<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1250,7 +1199,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_Wait		  	=>	s_tx_data_out(31 downto 0) 						<= WTRMp;			-- transmit WTRMp to the Physical Layer
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag		<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1291,7 +1240,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_RcvWaitFifo	=>	s_tx_data_out(31 downto 0) 						<= SYNCp;			-- transmit SYNCp to the Physical Layer
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag								<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1321,7 +1270,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_RcvChkRdy	=>	s_tx_data_out(31 downto 0) 						<= R_RDYp;			-- transmit R_RDYp to the Physical Layer, indicating readiness for reception
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag								<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1353,7 +1302,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 										s_tx_data_out(31 downto 0) 						<= DMATp;			-- transmit DMATp to the Physical Layer, requesting the FIS transmission stop
 										s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-										s_tx_primitive_flag				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+										s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 										s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 										if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1386,7 +1335,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 										s_tx_data_out(31 downto 0) 						<= R_IPp;			-- Transmit R_IPp to the Physical Layer, indicating that reception is in progress
 										-- s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-										s_tx_primitive_flag				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+										s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 										s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 										if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1438,7 +1387,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 										if(s_primitive_in_temp = '1' and s_rx_data_in = EOFp) then
 											s_rx_data_out(31 downto 0)					<= c_no_data;			-- no data to transmit to the Transport Layer
 											s_trans_status_out(c_l_rcv_data_valid)			<= '0';				-- inform the Transport Layer that the Link Layer is not sending valid receive data
-										elsif (s_scram_rdy = '1') then											--  and pause_just_finished /= '1') then		-- if the descrambler output is valid
+										elsif (s_scram_rdy = '1'  and pause_just_finished /= '1') then		-- if the descrambler output is valid
 											s_rx_data_out								<= s_lfsr_data_out;		-- send the descrambler output to the Transport Layer
 											s_trans_status_out(c_l_rcv_data_valid)			<= '1';				-- inform the Transport Layer that the Link Layer is sending valid receive data
 										else
@@ -1446,7 +1395,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 											s_trans_status_out(c_l_rcv_data_valid)			<= '0';				-- inform the Transport Layer that the Link Layer is not sending valid receive data
 										end if;
 
-										if (s_phy_status_in(c_l_pause_all) = '1') then
+										if (pause_just_finished = '1') then
 											s_lfsr_en									<= '0';
 										elsif (s_primitive_in_temp = '1' and s_rx_data_in(31 downto 0) = HOLDp) then	-- more data to transmit and Physical sends HOLDAp
 											s_lfsr_en									<= '0';										-- pause the descrambler (set enable to zero)
@@ -1460,7 +1409,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_Hold			=>	s_tx_data_out(31 downto 0) 						<= HOLDp;			-- transmit HOLDp to the Physical Layer
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag			<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1489,7 +1438,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_RcvHold		=>	-- s_tx_data_out(31 downto 0) 						<= c_no_data;		-- no data to transmit to the Physical Layer
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									-- s_tx_primitive_flag				<= '0';				-- inform the Physical Layer that a valid primitive is not being transmitted
+									-- s_phy_status_out(c_l_primitive_out)				<= '0';				-- inform the Physical Layer that a valid primitive is not being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									s_trans_status_out(c_l_phy_paused)				<= '1';				-- inform the Transport Layer that the Physical Layer has requested a pause
@@ -1513,7 +1462,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 
 									if (s_primitive_in_temp = '1' and s_rx_data_in(31 downto 0) = HOLDp) then
 										s_lfsr_en										<= '0';
-									elsif (phy_status_in(c_l_pause_all) = '1') then
+									elsif (pause_just_finished = '1') then
 										s_lfsr_en										<= '0';
 									else
 										s_lfsr_en										<= '1';
@@ -1521,16 +1470,16 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 
 									if(s_trans_status_in(c_l_escape) = '1') then
 										s_tx_data_out(31 downto 0) 					<= DMATp;			-- transmit DMATp to the Physical Layer if the Transport Layer ends transfer
-										s_tx_primitive_flag			<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+										s_phy_status_out(c_l_primitive_out)			<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									else
 										s_tx_data_out(31 downto 0)			 		<= HOLDAp;			-- under normal conditions, transmit hold acknowledge
-										s_tx_primitive_flag			<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+										s_phy_status_out(c_l_primitive_out)			<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									end if;
 
 			when L_RcvEOF		=>	s_tx_data_out(31 downto 0) 						<= R_IPp;			-- transmit reception in progress to Physical Layer
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1566,7 +1515,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_WaitCRC		=>	s_tx_data_out(31 downto 0) 						<= R_IPp;			-- transmit reception in progress to Physical Layer
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag			<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1602,7 +1551,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_GoodCRC		=>	s_tx_data_out(31 downto 0) 						<= R_IPp;			-- transmit reception in progress to Physical Layer
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag			<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1632,7 +1581,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_GoodEnd	  	=>	s_tx_data_out(31 downto 0) 						<= R_OKp;			-- transmit R_OKp to the Physical Layer, indicating the reception was successful
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag			<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1662,7 +1611,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when L_BadEnd		=>	s_tx_data_out(31 downto 0) 						<= R_ERRp;			-- transmit R_ERRp to the Physical Layer, indicating the reception was unsuccessful
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag			<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '1';				-- inform the Physical Layer that a valid primitive is being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then
@@ -1692,7 +1641,7 @@ STATE_MEMORY: process (s_clk,s_rst_n)
 			when others 		=>	s_tx_data_out(31 downto 0) 						<= c_no_data;		-- no data to transmit to the Physical Layer
 									s_rx_data_out(31 downto 0)						<= c_no_data;		-- no data to transmit to the Transport Layer
 
-									s_tx_primitive_flag			<= '0';				-- inform the Physical Layer that a valid primitive is not being transmitted
+									s_phy_status_out(c_l_primitive_out)				<= '0';				-- inform the Physical Layer that a valid primitive is not being transmitted
 									s_phy_status_out(c_l_clear_status)				<= '0';				-- the Physical Layer does not need to clear its status vector to the Link Layer
 
 									if (s_phy_status_in(c_l_pause_all) = '1') then

@@ -77,6 +77,10 @@ architecture transport_layer_arch of transport_layer is
     signal tx_buffer : double_buffer;
     signal rx_buffer : double_buffer;
 
+    --attribute ramstyle : string;
+    --attribute ramstyle of tx_buffer : signal is "M10K";
+    --attribute ramstyle of rx_buffer : signal is "M10K";
+
     signal tx_write_ptr, tx_read_ptr : integer range 0 to BUFFER_DEPTH;
     signal rx_write_ptr, rx_read_ptr : integer range 0 to BUFFER_DEPTH;
     signal tx_buffer_full, rx_buffer_full, tx_buffer_empty, rx_buffer_empty   : std_logic_vector(1 downto 0);
@@ -279,13 +283,15 @@ begin
             --        next_state <= dma_write_data_idle;
             --    end if;
             when dma_write_data_fis =>
-                if(pause_just_finished = '0' and link_rdy = '1')then
+                --if(pause_just_finished = '0' and link_rdy = '1')then
+                if(pause = '0' and link_rdy = '1')then
                     next_state <= dma_write_data_frame;
                 else
                     next_state <= dma_write_data_fis;
                 end if;
             when dma_write_data_frame   =>
-                if(pause_just_finished = '1')then
+                --if(pause_just_finished = '1')then
+                if(pause = '1')then
                     next_state <= pause_data_tx;
                 elsif(tx_read_ptr < BUFFER_DEPTH and link_rdy = '1')then
                     next_state <= dma_write_data_frame;
@@ -507,7 +513,7 @@ begin
                         elsif (tx_buffer_full(1) = '1') then
                                 --lock tx1 buffer
                                 tx1_locked <= '1';
-                                tx_buffer_empty(0) <= '0';
+                                tx_buffer_empty(1) <= '0';
                                 --set buffer index to 1
                                 tx_index <= 1;
                         elsif (user_command(1 downto 0) = "10") then
@@ -649,16 +655,18 @@ begin
                         --end if;
                     when dma_read_data_frame    => --store data into rx buffer
                         if(pause = '0')then
-                            rx_buffer(rx_index)(rx_write_ptr) <= data_from_link;
-                            if(rx_write_ptr < BUFFER_DEPTH - 1) then --Check data valid flag from link
-                                rx_write_ptr <= rx_write_ptr + 1;
-                            else
-                                rx_buffer_full(rx_index) <= '1';
-                                --rx_from_link_ready <= '0'; --not ready to receive more data, should be uncommented but link layer bug breaks stuff if it is
-                                if(rx_index = 0) then
-                                    rx0_locked <= '0';
+                            if(data_from_link_valid = '1')then
+                                rx_buffer(rx_index)(rx_write_ptr) <= data_from_link;
+                                if(rx_write_ptr < BUFFER_DEPTH - 1) then --Check data valid flag from link
+                                    rx_write_ptr <= rx_write_ptr + 1;
                                 else
-                                    rx1_locked <= '0';
+                                    rx_buffer_full(rx_index) <= '1';
+                                    --rx_from_link_ready <= '0'; --not ready to receive more data, should be uncommented but link layer bug breaks stuff if it is
+                                    if(rx_index = 0) then
+                                        rx0_locked <= '0';
+                                    else
+                                        rx1_locked <= '0';
+                                    end if;
                                 end if;
                             end if;
                         --else

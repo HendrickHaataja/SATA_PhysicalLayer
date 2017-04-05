@@ -101,6 +101,9 @@ architecture top_arch of top is
     signal app_control_counter : integer range 0 to 1000001;
     signal app_data_counter : integer range 0 to BUFFER_DEPTH;
 
+    signal logical_sector_index : integer range 0 to 1024;
+    signal app_count_up : std_logic;
+
     signal msata_device_ready : std_logic;
     signal app_write_valid : std_logic;
     signal app_send_read_valid : std_logic;
@@ -522,14 +525,21 @@ architecture top_arch of top is
             app_data_counter <= 0;
             app_control_counter <= 0;
             app_read_sent <= '0';
+            logical_sector_index <= 0;
+            app_count_up <= '1';
         elsif(rising_edge(txclkout))then
             if(msata_device_ready = '1')then
-                if(app_control_counter < (2 * BUFFER_DEPTH))then --send write
+                if(app_control_counter < (2 * 2 * BUFFER_DEPTH))then --send write
                     if(app_write_valid = '1')then
                         if(app_data_counter < BUFFER_DEPTH)then
                             user_cmd_to_trans <= "001";--send write
-                            user_address_to_trans <= test_write_address;
-                            user_data_to_trans <= std_logic_vector(to_unsigned(app_data_counter,DATA_WIDTH));
+                            --user_address_to_trans <= test_write_address;
+                            user_address_to_trans <= std_logic_vector(to_unsigned(logical_sector_index,DATA_WIDTH));
+                            if(app_count_up = '1')then
+                                user_data_to_trans <= std_logic_vector(to_unsigned(app_data_counter,DATA_WIDTH));
+                            else
+                                user_data_to_trans <= std_logic_vector(to_unsigned(BUFFER_DEPTH - 1 - app_data_counter,DATA_WIDTH));
+                            end if;
                             app_data_counter <= app_data_counter + 1;
                         else
                             user_cmd_to_trans <= "000";
@@ -540,11 +550,11 @@ architecture top_arch of top is
                     else
                         app_control_counter <= app_control_counter;
                     end if;
-                elsif(app_control_counter < 4 * BUFFER_DEPTH)then --send read
+                elsif(app_control_counter < 4 * 2 * BUFFER_DEPTH)then --send read
                     app_data_counter <= 0;
                     if(app_send_read_valid = '1' and app_read_sent = '0')then
                         user_cmd_to_trans <= "010";--send read
-                        user_address_to_trans <= test_write_address;
+                        user_address_to_trans <= std_logic_vector(to_unsigned(logical_sector_index,DATA_WIDTH));
                         user_data_to_trans <= (others => '1');
                         app_read_sent <= '1';
                     elsif(app_read_sent = '1')then
@@ -555,20 +565,26 @@ architecture top_arch of top is
                     else
                         app_control_counter <= app_control_counter;
                     end if;
-                elsif(app_control_counter < 6 * BUFFER_DEPTH)then --retrieve read
+                elsif(app_control_counter < 6 * 2 * BUFFER_DEPTH)then --retrieve read
                     if(app_receive_read_valid = '1')then
                         user_cmd_to_trans <= "100";
-                        user_address_to_trans <= test_write_address;
+                        user_address_to_trans <= std_logic_vector(to_unsigned(logical_sector_index,DATA_WIDTH));
                         user_data_to_trans <= (others => '1');
                         --something <= trans_data_to_user;
                     else
                         user_cmd_to_trans <= "000";
                     end if;
                     app_control_counter <= app_control_counter + 1;
-                elsif(app_control_counter > 8 * BUFFER_DEPTH)then --reset
+                elsif(app_control_counter >= 8 * 2 * BUFFER_DEPTH)then --reset
                     user_cmd_to_trans <= "000";
                     user_data_to_trans <= (others => '0');
                     user_address_to_trans <= (others => '0');
+                    if(logical_sector_index < 1024)then
+                        logical_sector_index <= logical_sector_index + BUFFER_DEPTH/DWORDS_PER_SECTOR;
+                    else
+                        logical_sector_index <= 0;
+                        app_count_up <= not app_count_up;
+                    end if;
                     app_control_counter <= 0;
                     app_data_counter <= 0;
                     app_read_sent <= '0';

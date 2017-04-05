@@ -24,7 +24,7 @@ architecture link_layer_32bit_TB_arch of link_layer_32bit_TB is
 
 			--Interface with Transport Layer
 			trans_status_in :	in std_logic_vector(7 downto 0);		-- [FIFO_RDY/n, transmit request, data complete, escape, bad FIS, error, good FIS]
-			trans_status_out:	out std_logic_vector(6 downto 0);		-- [Link Idle, transmit bad status, transmit good status, crc good/bad, comm error, fail transmit]
+			trans_status_out:	out std_logic_vector(7 downto 0);		-- [Link Idle, transmit bad status, transmit good status, crc good/bad, comm error, fail transmit]
 			tx_data_in		:	in std_logic_vector(31 downto 0);
 			rx_data_out		:	out std_logic_vector(31 downto 0);
 
@@ -42,7 +42,7 @@ architecture link_layer_32bit_TB_arch of link_layer_32bit_TB is
   signal rst_n_TB 				: std_logic;
 
   signal trans_status_in_TB  	: std_logic_vector(7 downto 0);
-  signal trans_status_out_TB  	: std_logic_vector(6 downto 0);
+  signal trans_status_out_TB  	: std_logic_vector(7 downto 0);
   signal tx_data_in_TB			: std_logic_vector(31 downto 0);
   signal rx_data_out_TB			: std_logic_vector(31 downto 0);
 
@@ -125,11 +125,18 @@ counter_process : PROCESS(clk_TB, rst_n_TB)
 			wait for 3.0*t_clk_per; 					-- SendAlign, Idle
 
 			-- start write
-			trans_status_in_TB(5)	 	<= '1';			-- Transport Request
+			phy_status_in_TB(3) 		<= '1';
+			
+			--trans_status_in_TB(5)	 	<= '1';			-- Transport Request
+			rx_data_in_TB				<= X_RDYp;
+			trans_status_in_TB(6)	 	<= '1';			-- Transport Request
+			phy_status_in_TB(2) 		<= '1';
+			wait for 1.0*t_clk_per;
+			phy_status_in_TB(3) 		<= '0';
 			wait for 1.0*t_clk_per;
 			trans_status_in_TB(5) 		<= '0';
-			rx_data_in_TB				<= R_RDYp;
-			trans_status_in_TB(4) 		<= '1';			-- more data
+			--rx_data_in_TB				<= R_RDYp;
+			--trans_status_in_TB(4) 		<= '1';			-- more data
 			wait for 2.0*t_clk_per;						-- state transition
 			-- send data
 			start <= '1';
