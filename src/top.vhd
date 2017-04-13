@@ -101,7 +101,7 @@ architecture top_arch of top is
     signal app_control_counter : integer range 0 to 1000001;
     signal app_data_counter : integer range 0 to BUFFER_DEPTH;
 
-    signal logical_sector_index : integer range 0 to 1024;
+    signal logical_sector_index : integer range 0 to BUFFER_DEPTH;
     signal app_count_up : std_logic;
 
     signal msata_device_ready : std_logic;
@@ -110,6 +110,11 @@ architecture top_arch of top is
     signal app_receive_read_valid : std_logic;
     signal test_write_address : std_logic_vector(DATA_WIDTH - 1 downto 0);
     signal app_read_sent : std_logic;
+    signal error_counter : integer range 0 to integer'high;
+    signal words_read    : integer range 0 to integer'high;
+
+    signal user_cmd_to_trans_prev : std_logic_vector(2 downto 0);
+    signal app_receive_read_valid_prev : std_logic;
 
     component transport_dummy is
         port(
@@ -509,7 +514,7 @@ architecture top_arch of top is
 
     reset <= (not pb_fpga1) or cpu_rst_debounced;
     rst_n <= not reset;
-    USER_LED_FPGA0 <= '1' when pb_fpga1 = '1' else '0';
+    USER_LED_FPGA0 <= '1' when pb_fpga1 = '1' or (error_counter > 2147483646 and words_read = 2147483646) else '0';
 
     -- dummy status and data values
 --    link_status_to_phy <= LINK_STATUS_DEFAULT(LINK_STATUS_LENGTH-1 downto 0);
@@ -527,7 +532,13 @@ architecture top_arch of top is
             app_read_sent <= '0';
             logical_sector_index <= 0;
             app_count_up <= '1';
+            error_counter <= 0;
+            words_read <= 0;
+            user_cmd_to_trans_prev <= "000";
+            app_receive_read_valid_prev <= '0';
         elsif(rising_edge(txclkout))then
+            user_cmd_to_trans_prev <= user_cmd_to_trans;
+            app_receive_read_valid_prev <= app_receive_read_valid;
             if(msata_device_ready = '1')then
                 if(app_control_counter < (2 * 2 * BUFFER_DEPTH))then --send write
                     if(app_write_valid = '1')then
@@ -570,16 +581,33 @@ architecture top_arch of top is
                         user_cmd_to_trans <= "100";
                         user_address_to_trans <= std_logic_vector(to_unsigned(logical_sector_index,DATA_WIDTH));
                         user_data_to_trans <= (others => '1');
-                        --something <= trans_data_to_user;
                     else
                         user_cmd_to_trans <= "000";
                     end if;
+
+                    if(user_cmd_to_trans_prev = "100" and app_receive_read_valid_prev = '1') then
+                        if(app_data_counter < BUFFER_DEPTH)then
+                            app_data_counter <= app_data_counter + 1;
+                        end if;
+                        --something <= trans_data_to_user;
+                        if (app_count_up = '1') then
+                            if(trans_data_to_user /= std_logic_vector(to_unsigned(app_data_counter,DATA_WIDTH))) then
+                                error_counter <= error_counter + 1;
+                            end if;
+                        else -- down
+                            if(trans_data_to_user /= std_logic_vector(to_unsigned(BUFFER_DEPTH - 1 - app_data_counter,DATA_WIDTH))) then
+                                error_counter <= error_counter + 1;
+                            end if;
+                        end if;
+                        words_read <= words_read + 1;
+                    end if;
+
                     app_control_counter <= app_control_counter + 1;
                 elsif(app_control_counter >= 8 * 2 * BUFFER_DEPTH)then --reset
                     user_cmd_to_trans <= "000";
                     user_data_to_trans <= (others => '0');
                     user_address_to_trans <= (others => '0');
-                    if(logical_sector_index < 1024)then
+                    if(logical_sector_index < BUFFER_DEPTH)then
                         logical_sector_index <= logical_sector_index + BUFFER_DEPTH/DWORDS_PER_SECTOR;
                     else
                         logical_sector_index <= 0;
